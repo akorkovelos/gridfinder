@@ -371,3 +371,52 @@ def prepare_roads(roads_in, aoi_in, ntl_in):
     )
 
     return roads_raster, affine
+
+def prepare_settlements(settlements_in, aoi_in, ntl_in):
+    """Prepare a roads feature layer for use in algorithm.
+
+    Parameters
+    ----------
+    roads_in : str, Path
+        Path to a roads feature layer. This implementation is specific to
+        OSM data and won't assign proper weights to other data inputs.
+    aoi_in : str, Path or GeoDataFrame
+        AOI to clip roads.
+    ntl_in : str, Path
+        Path to a raster file, only used for correct shape and
+        affine of roads raster.
+
+    Returns
+    -------
+    roads_raster : numpy array
+        Roads as a raster array with the value being the cost of traversing.
+    affine : affine.Affine
+        Affine raster transformation for the new raster (same as ntl_in).
+    """
+
+    ntl_rd = rasterio.open(ntl_in)
+    shape = ntl_rd.read(1).shape
+    affine = ntl_rd.transform
+
+    if isinstance(aoi_in, gpd.GeoDataFrame):
+        aoi = aoi_in
+    else:
+        aoi = gpd.read_file(aoi_in)
+
+    settlements_masked = gpd.read_file(settlements_in, mask=aoi)
+    settlements = gpd.sjoin(settlements_masked, aoi, how="inner", op="intersects")
+    settlements = settlements[settlements_masked.columns]
+
+    settlements["weight"] = 1
+
+    settlements_for_raster = [(row.geometry, row.weight) for _, row in settlements.iterrows()]
+    settlements_raster = rasterize(
+        settlements_for_raster,
+        out_shape=shape,
+        fill=1,
+        default_value=0,
+        all_touched=True,
+        transform=affine,
+    )
+
+    return settlements_raster, affine
