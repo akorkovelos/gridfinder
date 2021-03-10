@@ -404,12 +404,12 @@ def prepare_settlements(settlements_in, aoi_in, ntl_in):
         aoi = gpd.read_file(aoi_in)
 
     settlements_masked = gpd.read_file(settlements_in, mask=aoi)
-    #settlements = gpd.sjoin(settlements_masked, aoi, how="inner", op="contains")
-    #settlements = settlements[settlements_masked.columns]
+    settlements = gpd.sjoin(settlements_masked, aoi, how="inner", op="intersects")
+    settlements = settlements[settlements_masked.columns]
     settlements = settlements_masked
 
     settlements["weight"] = 1
-    settlements.loc[settlements["Pop"] >= 0, "weight"] = 0
+    settlements.loc[settlements["Pop2030"] >= 0, "weight"] = 0
 
     settlements = settlements[settlements.weight != 1]
 
