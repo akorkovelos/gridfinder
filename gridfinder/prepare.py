@@ -3,6 +3,7 @@ Prepare input layers for gridfinder.
 
 Functions:
 
+- merge GEP results (clusters, csv output)
 - clip_rasters
 - merge_rasters
 - filter_func
@@ -10,25 +11,64 @@ Functions:
 - prepare_ntl
 - drop_zero_pop
 - prepare_roads
+- prepare_settlements (not used)
+- rasterize_results
 """
 
 import os
+import math
 from math import sqrt
 import json
 from pathlib import Path
 
 import numpy as np
 from scipy import signal
+import pandas as pd
 
 import fiona
 import rasterio
 from rasterio.mask import mask
+from rasterio import features
 from rasterio.features import rasterize
 from rasterio import Affine
 from rasterio.warp import reproject, Resampling
 
+#import rasterio, affine
+#from affine import Affine
+
 import geopandas as gpd
 from gridfinder._util import save_raster, clip_raster
+
+
+def merge_result_files(inC, inR, cols):
+    ''' Create raster describing a field in the shapefile
+
+    INPUT
+    inC: geopandas dataframe containing GEP clusters (.gpkg)
+    inR: pandas dataframe containing GEP model results for a scenario (in .csv format)
+    cols: columsn one wants to keep from the results (list)
+
+    OUTPUt
+    inD: geopandas dataframe containing GEP results
+    '''
+
+    # Merge clusters and results on ID
+
+    inC = gpd.read_file(inC)
+    inR = pd.read_csv(inR)
+
+    inD = inC.merge(inR[cols],
+                    how="left",
+                    left_on="id",
+                    right_on='id')  # id is used in GEP to connect the two
+
+    # Create a column to use when burning to raster
+    inD["rasterize"] = 0
+    inD.loc[(inD.FinalElecCode2025 == 1) |
+            (inD.FinalElecCode2030 == 1), "rasterize"] = 1
+
+    return inD
+
 
 
 def clip_rasters(folder_in, folder_out, aoi_in, debug=False):
@@ -428,3 +468,47 @@ def prepare_settlements(settlements_in, aoi_in, ntl_in):
     )
 
     return settlements_raster, affine
+
+
+def rasterize_results(inD, outFile, field='rasterize', res=0.0083, dtype='uint8'):
+    ''' Create raster describing a field in the shapefile
+    INPUT
+    inD [ geopandas dataframe created from join_results ]
+    outFile [ string ] - path to output raster file
+    [ optional ] field [ string ] - column to rasterize from inD
+    [ optional ] res [ number ] - resolution of output raster in units of inD crs
+    '''
+
+    # create metadata
+    bounds = inD.total_bounds
+    # calculate height and width from resolution
+    width = math.ceil((bounds[2] - bounds[0]) / res)
+    height = math.ceil((bounds[3] - bounds[1]) / res)
+
+    #cAffine = affine.Affine(res, 0, bounds[0], 0, res * -1, bounds[3])
+    cAffine = Affine(res, 0, bounds[0], 0, res * -1, bounds[3])
+    nTransform = cAffine  # (res, 0, bounds[2], 0, res * -1, bounds[1])
+    cMeta = {'count': 1,
+             'crs': inD.crs,
+             'dtype': dtype,
+             'affine': cAffine,
+             'driver': 'GTiff',
+             'transform': nTransform,
+             'height': height,
+             'width': width,
+             'nodata': 99}
+    inD = inD.sort_values(by=[field], ascending=False)
+    shapes = ((row.geometry, row[field]) for idx, row in inD.iterrows())
+
+    if not outFile.parent.exists():
+        outFile.parent.mkdir(parents=True, exist_ok=True)
+
+    with rasterio.open(outFile, 'w', **cMeta) as out:
+        burned = features.rasterize(shapes=shapes,
+                                    fill=0,
+                                    all_touched=True,
+                                    out_shape=(cMeta['height'], cMeta['width']),
+                                    transform=out.transform,
+                                    merge_alg=rasterio.enums.MergeAlg.replace)
+        burned = burned.astype(cMeta['dtype'])
+        out.write_band(1, burned)

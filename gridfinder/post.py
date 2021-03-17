@@ -166,6 +166,7 @@ def raster_to_lines(guess_skel_in):
     guess_gdf = gpd.GeoDataFrame(guess_gdf, crs=rast.crs, geometry=geometry)
 
     guess_gdf["same"] = 0
+    #guess_gdf['same'] = guess_gdf.apply(lambda l: l['geometry'].coords[0][0], axis=1)
     guess_gdf = guess_gdf.dissolve(by="same")
     guess_gdf = guess_gdf.to_crs(epsg=4326)
 
